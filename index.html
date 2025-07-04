@@ -3,21 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Restaurants à Antananarivo</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <title>AR Restaurant Navigator</title>
     <style>
-        body {
-            margin: 0;
-            padding: 0;
-            font-family: Arial, sans-serif;
+        body { 
+            margin: 0; 
+            padding: 0; 
             overflow: hidden;
+            font-family: Arial, sans-serif;
         }
+        
+        #ar-view {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            display: none;
+        }
+        
         #map {
             position: absolute;
             top: 0;
             bottom: 0;
             width: 100%;
         }
+        
         #controls {
             position: absolute;
             top: 10px;
@@ -28,6 +37,7 @@
             border-radius: 5px;
             box-shadow: 0 0 10px rgba(0,0,0,0.2);
         }
+        
         #restaurant-list {
             position: absolute;
             bottom: 10px;
@@ -41,75 +51,78 @@
             box-shadow: 0 0 15px rgba(0,0,0,0.2);
             z-index: 1000;
         }
+        
         .restaurant-item {
             padding: 10px;
             border-bottom: 1px solid #eee;
             cursor: pointer;
         }
+        
         .restaurant-item:hover {
             background-color: #f5f5f5;
         }
-        .restaurant-item h3 {
-            margin: 0 0 5px 0;
-            color: #2c3e50;
-        }
-        .restaurant-details {
-            display: flex;
-            justify-content: space-between;
-            color: #7f8c8d;
-            font-size: 0.9em;
-        }
-        #navigation-panel {
+        
+        #ar-pointer {
             position: absolute;
             top: 50%;
-            left: 10px;
-            transform: translateY(-50%);
-            background: rgba(255, 255, 255, 0.9);
-            padding: 10px;
-            border-radius: 5px;
-            z-index: 1000;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 40px;
+            color: red;
+            text-shadow: 0 0 10px black;
+            z-index: 1001;
             display: none;
         }
-        #compass {
-            width: 60px;
-            height: 60px;
-            background-color: #f8f8f8;
-            border-radius: 50%;
-            border: 2px solid #ddd;
-            position: relative;
-            margin: 0 auto;
-        }
-        #compass-arrow {
+        
+        #ar-info {
             position: absolute;
-            top: 5px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 0;
-            height: 0;
-            border-left: 10px solid transparent;
-            border-right: 10px solid transparent;
-            border-bottom: 20px solid red;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            border-radius: 10px;
+            padding: 10px;
+            z-index: 1001;
+            display: none;
         }
-        #distance {
-            text-align: center;
-            margin-top: 5px;
-            font-weight: bold;
+        
+        video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 0;
+        }
+        
+        #ar-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
         }
     </style>
 </head>
 <body>
     <div id="map"></div>
     
-    <div id="controls">
-        <button id="locate-btn">Centrer sur ma position</button>
-        <button id="ar-btn">Mode Navigation AR</button>
+    <div id="ar-view">
+        <video id="camera-feed" autoplay playsinline></video>
+        <div id="ar-overlay"></div>
+        <div id="ar-pointer">↑</div>
+        <div id="ar-info">
+            <div>Distance: <span id="ar-distance">--</span>m</div>
+            <div id="ar-restaurant-name">Aucun restaurant sélectionné</div>
+        </div>
     </div>
     
-    <div id="navigation-panel">
-        <div id="compass">
-            <div id="compass-arrow"></div>
-        </div>
-        <div id="distance">-- m</div>
+    <div id="controls">
+        <button id="locate-btn">Ma position</button>
+        <button id="ar-btn">Mode AR</button>
     </div>
     
     <div id="restaurant-list">
@@ -120,10 +133,11 @@
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
     <script>
         // Configuration initiale
-        const initialPosition = [-18.915107, 47.552972]; // Vos coordonnées
+        const initialPosition = [-18.915107, 47.552972];
         let userPosition = initialPosition;
         let userHeading = null;
         let selectedRestaurant = null;
+        let cameraStream = null;
         
         // Initialisation de la carte
         const map = L.map('map').setView(initialPosition, 17);
@@ -151,8 +165,7 @@
                 type: "Français",
                 rating: 4.5,
                 distance: 150,
-                position: [-18.9145, 47.5532],
-                address: "Rue Ratsimilaho"
+                position: [-18.9145, 47.5532]
             },
             {
                 id: 2,
@@ -160,8 +173,7 @@
                 type: "Japonais",
                 rating: 4.2,
                 distance: 250,
-                position: [-18.9163, 47.5518],
-                address: "Avenue de l'Indépendance"
+                position: [-18.9163, 47.5518]
             },
             {
                 id: 3,
@@ -169,26 +181,7 @@
                 type: "Gastronomique",
                 rating: 4.7,
                 distance: 400,
-                position: [-18.9138, 47.5545],
-                address: "Rue Andriandahifotsy"
-            },
-            {
-                id: 4,
-                name: "Pizza Inn",
-                type: "Italien",
-                rating: 4.0,
-                distance: 320,
-                position: [-18.9172, 47.5526],
-                address: "Rue Ravoahangy"
-            },
-            {
-                id: 5,
-                name: "Hotely Matsoa",
-                type: "Local",
-                rating: 3.8,
-                distance: 180,
-                position: [-18.9142, 47.5511],
-                address: "Rue Rainandriamampandry"
+                position: [-18.9138, 47.5545]
             }
         ];
         
@@ -205,8 +198,7 @@
             restaurant.marker.bindPopup(`
                 <b>${restaurant.name}</b><br>
                 <small>${restaurant.type}</small><br>
-                ${'★'.repeat(Math.round(restaurant.rating))} ${restaurant.rating.toFixed(1)}<br>
-                ${restaurant.distance}m · ${restaurant.address}
+                ${'★'.repeat(Math.round(restaurant.rating))} ${restaurant.rating.toFixed(1)}
             `);
         });
         
@@ -220,10 +212,8 @@
                 item.className = 'restaurant-item';
                 item.innerHTML = `
                     <h3>${restaurant.name}</h3>
-                    <div class="restaurant-details">
-                        <span>${restaurant.type} · ${'★'.repeat(Math.round(restaurant.rating))} ${restaurant.rating.toFixed(1)}</span>
-                        <span>${restaurant.distance}m</span>
-                    </div>
+                    <div>${restaurant.type} · ${'★'.repeat(Math.round(restaurant.rating))} ${restaurant.rating.toFixed(1)}</div>
+                    <small>${restaurant.distance}m</small>
                 `;
                 
                 item.addEventListener('click', () => {
@@ -236,40 +226,42 @@
         
         // Sélection d'un restaurant
         function selectRestaurant(restaurant) {
-            // Désélectionner le précédent
-            if (selectedRestaurant) {
-                selectedRestaurant.marker.setOpacity(1);
-            }
-            
-            // Sélectionner le nouveau
             selectedRestaurant = restaurant;
-            restaurant.marker.setOpacity(0.8);
-            restaurant.marker.openPopup();
+            document.getElementById('ar-restaurant-name').textContent = restaurant.name;
+            document.getElementById('ar-distance').textContent = restaurant.distance;
             
-            // Centrer la carte sur la zone entre l'utilisateur et le restaurant
+            // Centrer la carte
             const bounds = L.latLngBounds([userPosition, restaurant.position]);
             map.fitBounds(bounds, { padding: [50, 50] });
             
-            // Mettre à jour la navigation AR
-            updateARNavigation();
+            updateARPointer();
         }
         
-        // Mise à jour de la navigation AR
-        function updateARNavigation() {
-            if (!selectedRestaurant) return;
-            
-            // Calculer la distance
-            const distance = selectedRestaurant.distance;
-            document.getElementById('distance').textContent = `${distance}m`;
-            
-            // Calculer la direction (simplifié)
-            if (userHeading !== null) {
-                updateCompass();
+        // Activer la caméra
+        async function startCamera() {
+            try {
+                cameraStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: 'environment',
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
+                    },
+                    audio: false
+                });
+                
+                const video = document.getElementById('camera-feed');
+                video.srcObject = cameraStream;
+                
+                return true;
+            } catch (err) {
+                console.error("Erreur caméra:", err);
+                alert("Impossible d'accéder à la caméra: " + err.message);
+                return false;
             }
         }
         
-        // Mise à jour de la boussole
-        function updateCompass() {
+        // Mettre à jour la flèche AR
+        function updateARPointer() {
             if (!selectedRestaurant || !userHeading) return;
             
             // Calculer l'angle vers le restaurant
@@ -281,7 +273,8 @@
             const relativeAngle = (360 - userHeading + targetAngle) % 360;
             
             // Mettre à jour la flèche
-            document.getElementById('compass-arrow').style.transform = `translateX(-50%) rotate(${relativeAngle}deg)`;
+            document.getElementById('ar-pointer').style.transform = 
+                `translate(-50%, -50%) rotate(${-relativeAngle}deg)`;
         }
         
         // Géolocalisation
@@ -293,14 +286,12 @@
                         userMarker.setLatLng(userPosition);
                         map.setView(userPosition, 17);
                         
-                        // Si un restaurant est sélectionné, recalculer la direction
                         if (selectedRestaurant) {
-                            updateARNavigation();
+                            updateARPointer();
                         }
                     },
                     error => {
                         alert("Impossible d'obtenir la position : " + error.message);
-                        // Revenir à la position initiale
                         userPosition = initialPosition;
                         userMarker.setLatLng(userPosition);
                         map.setView(userPosition, 17);
@@ -308,45 +299,57 @@
                     { enableHighAccuracy: true }
                 );
             } else {
-                alert("La géolocalisation n'est pas supportée par votre navigateur");
+                alert("La géolocalisation n'est pas supportée");
             }
         }
         
-        // Écouteur d'orientation pour le mode AR
-        function setupDeviceOrientation() {
+        // Détection de l'orientation
+        function setupOrientation() {
             if (window.DeviceOrientationEvent) {
                 window.addEventListener('deviceorientation', event => {
                     if (event.alpha !== null) {
-                        userHeading = event.alpha; // 0-360 degrees
-                        updateCompass();
+                        userHeading = event.alpha;
+                        updateARPointer();
                     }
                 });
                 
-                // Demande de permission pour iOS 13+
+                // Permission pour iOS 13+
                 if (typeof DeviceOrientationEvent.requestPermission === 'function') {
                     DeviceOrientationEvent.requestPermission()
                         .then(response => {
                             if (response === 'granted') {
-                                window.addEventListener('deviceorientation', handleOrientation);
+                                window.addEventListener('deviceorientation', (e) => {
+                                    userHeading = e.alpha;
+                                    updateARPointer();
+                                });
                             }
                         })
                         .catch(console.error);
                 }
             } else {
-                alert("Votre appareil ne supporte pas l'orientation ou l'accès a été refusé");
+                alert("L'orientation n'est pas supportée");
             }
         }
         
         // Basculer entre le mode carte et AR
-        function toggleARMode() {
-            const arPanel = document.getElementById('navigation-panel');
+        async function toggleARMode() {
+            const arView = document.getElementById('ar-view');
             const mapDiv = document.getElementById('map');
+            const arPointer = document.getElementById('ar-pointer');
+            const arInfo = document.getElementById('ar-info');
             
-            if (arPanel.style.display === 'block') {
+            if (arView.style.display === 'block') {
                 // Quitter le mode AR
-                arPanel.style.display = 'none';
+                arView.style.display = 'none';
                 mapDiv.style.display = 'block';
-                document.getElementById('ar-btn').textContent = 'Mode Navigation AR';
+                arPointer.style.display = 'none';
+                arInfo.style.display = 'none';
+                document.getElementById('ar-btn').textContent = 'Mode AR';
+                
+                // Éteindre la caméra
+                if (cameraStream) {
+                    cameraStream.getTracks().forEach(track => track.stop());
+                }
             } else {
                 // Entrer en mode AR
                 if (!selectedRestaurant) {
@@ -354,11 +357,17 @@
                     return;
                 }
                 
-                arPanel.style.display = 'block';
+                const cameraStarted = await startCamera();
+                if (!cameraStarted) return;
+                
+                arView.style.display = 'block';
                 mapDiv.style.display = 'none';
+                arPointer.style.display = 'block';
+                arInfo.style.display = 'block';
                 document.getElementById('ar-btn').textContent = 'Retour à la carte';
-                setupDeviceOrientation();
-                updateARNavigation();
+                
+                setupOrientation();
+                updateARPointer();
             }
         }
         
