@@ -217,7 +217,8 @@
             scene.add(directionalLight);
             
             // Création d'une flèche 3D sophistiquée
-            create3DArrow();
+            //create3DArrow();
+            createArrow();
             
             // Animation
             renderer.setAnimationLoop(() => {
@@ -268,6 +269,43 @@
             halo.position.y = 0.1;
             arrow.add(halo);
             
+            scene.add(arrow);
+        }
+
+        function createArrow() {
+            // Matériau bleu avec reflet
+            const material = new THREE.MeshStandardMaterial({
+                color: 0x4285F4,
+                roughness: 0.5,
+                metalness: 0.5,
+                transparent: true,
+                opacity: 0.9
+            });
+            
+            // Géométrie de la flèche en ">"
+            const shape = new THREE.Shape();
+            shape.moveTo(0, 0);
+            shape.lineTo(1, 0.5);
+            shape.lineTo(0, 1);
+            shape.lineTo(0.2, 0.5);
+            shape.lineTo(0, 0);
+            
+            const extrudeSettings = {
+                steps: 1,
+                depth: 0.2,
+                bevelEnabled: true,
+                bevelSize: 0.05,
+                bevelThickness: 0.05
+            };
+            
+            const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+            arrow = new THREE.Mesh(geometry, material);
+            
+            // Orientation initiale
+            arrow.rotation.x = -Math.PI / 2; // Horizontal
+            arrow.rotation.z = Math.PI / 2;  // Pointe vers l'avant
+            arrow.scale.set(0.3, 0.3, 0.3);
+            arrow.visible = false;
             scene.add(arrow);
         }
         
