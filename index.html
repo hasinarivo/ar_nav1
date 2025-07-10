@@ -6,137 +6,470 @@
     <title>AR Restaurant Navigator</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        /* [Vos styles CSS existants restent inchangés] */
+        body { 
+            margin: 0; 
+            padding: 0; 
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        
+        #map-container {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+        }
+        
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+        
+        #ar-view {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            display: none;
+        }
+        
+        #camera-feed {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        #ar-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 11;
+        }
+        
+        #ar-info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            border-radius: 10px;
+            padding: 10px;
+            z-index: 12;
+            display: none;
+        }
+        
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            display: flex;
+            gap: 10px;
+        }
+        
+        button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 20px;
+            background: #4285F4;
+            color: white;
+            font-weight: bold;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        
+        #restaurant-list {
+            position: absolute;
+            bottom: 80px;
+            left: 10px;
+            right: 10px;
+            background: rgba(255,255,255,0.95);
+            border-radius: 10px;
+            padding: 10px;
+            max-height: 30vh;
+            overflow-y: auto;
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            z-index: 1000;
+        }
+        
+        .restaurant-item {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
-    <!-- [Votre HTML existant reste inchangé jusqu'au script] -->
+    <div id="map-container">
+        <div id="map"></div>
+    </div>
     
-    <script type="module">
-  import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.module.js';
-  import { ARButton } from 'https://cdn.jsdelivr.net/npm/three@0.132.2/examples/jsm/webxr/ARButton.js';
-  import { XRControllerModelFactory } from 'https://cdn.jsdelivr.net/npm/three@0.132.2/examples/jsm/webxr/XRControllerModelFactory.js';
-  import L from 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet-src.esm.js';
-        // [Vos variables et fonctions existantes restent inchangées jusqu'à create3DArrow()]
+    <div id="ar-view">
+        <video id="camera-feed" autoplay playsinline></video>
+        <div id="ar-overlay"></div>
+        <div id="ar-info">
+            <div>Restaurant: <span id="ar-restaurant-name">-</span></div>
+            <div>Distance: <span id="ar-distance">-</span> m</div>
+            <div>Direction: <span id="ar-direction">-</span>°</div>
+        </div>
+    </div>
+    
+    <div id="controls">
+        <button id="locate-btn">📍 Ma position</button>
+        <button id="ar-btn">🎥 Mode AR</button>
+    </div>
+    
+    <div id="restaurant-list">
+        <h3 style="margin-top: 0; text-align: center;">Restaurants à proximité</h3>
+        <div id="restaurants-container"></div>
+    </div>
 
-        // Création de flèches directionnelles stylisées
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Three.js et WebXR -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/webxr/ARButton.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/DeviceOrientationControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
+    
+    <script>
+        // Configuration initiale
+        const initialPosition = [-18.915107, 47.552972];
+        let userPosition = initialPosition;
+        let userHeading = null;
+        let selectedRestaurant = null;
+        let cameraStream = null;
+        
+        // Variables Three.js
+        let scene, camera, renderer, arrow;
+        
+        // Initialisation de la carte
+        const map = L.map('map', {
+            zoomControl: false,
+            attributionControl: false
+        }).setView(initialPosition, 17);
+        
+        // Couche OpenStreetMap
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            noWrap: true,
+            updateWhenIdle: true,
+            detectRetina: true
+        }).addTo(map);
+        
+        // Marqueur de position utilisateur
+        const userMarker = L.marker(userPosition, {
+            icon: L.divIcon({
+                className: 'user-icon',
+                html: '<div style="background-color: #4285F4; width: 24px; height: 24px; border-radius: 50%; border: 3px solid white;"></div>',
+                iconSize: [30, 30]
+            })
+        }).addTo(map).bindPopup("Votre position");
+        
+        // Données des restaurants
+        const restaurants = [
+            {
+                id: 1,
+                name: "Le Louvre Antananarivo",
+                type: "Français",
+                rating: 4.5,
+                distance: 150,
+                position: [-18.9145, 47.5532]
+            },
+            {
+                id: 2,
+                name: "Sakura Sushi",
+                type: "Japonais",
+                rating: 4.2,
+                distance: 250,
+                position: [-18.9163, 47.5518]
+            },
+            {
+                id: 3,
+                name: "La Varangue",
+                type: "Gastronomique",
+                rating: 4.7,
+                distance: 400,
+                position: [-18.9138, 47.5545]
+            }
+        ];
+        
+        // Initialisation Three.js
+        function initThreeJS() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            document.getElementById('ar-overlay').appendChild(renderer.domElement);
+            
+            // Lumière
+            const light = new THREE.AmbientLight(0xffffff, 1);
+            scene.add(light);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(0, 1, 0);
+            scene.add(directionalLight);
+            
+            // Création d'une flèche 3D sophistiquée
+            create3DArrow();
+            
+            // Animation
+            renderer.setAnimationLoop(() => {
+                renderer.render(scene, camera);
+            });
+        }
+        
+        // Création d'une flèche 3D détaillée
         function create3DArrow() {
+            // Supprimer l'ancienne flèche si elle existe
             if (arrow) scene.remove(arrow);
             
-            // Matériau bleu métallique avec transparence
+            // Matériau rouge métallique
             const material = new THREE.MeshPhongMaterial({
-                color: 0x4285F4,
+                color: 0xff0000,
                 specular: 0x111111,
-                shininess: 50,
+                shininess: 30,
                 transparent: true,
                 opacity: 0.9
             });
             
-            // Création d'une double flèche directionnelle
+            // Création de la flèche avec plusieurs formes
+            const coneGeometry = new THREE.ConeGeometry(0.2, 0.5, 32);
+            const cylinderGeometry = new THREE.CylinderGeometry(0.05, 0.05, 1, 32);
+            
+            const cone = new THREE.Mesh(coneGeometry, material);
+            cone.position.y = 0.75;
+            
+            const cylinder = new THREE.Mesh(cylinderGeometry, material);
+            cylinder.position.y = 0.25;
+            
+            // Groupe pour contenir les éléments de la flèche
             arrow = new THREE.Group();
+            arrow.add(cone);
+            arrow.add(cylinder);
+            arrow.position.set(0, 0, -2);
             
-            // Flèche droite (pour tourner à droite)
-            const rightArrow = createDirectionIndicator('right');
-            rightArrow.position.set(0.5, 0, 0);
-            arrow.add(rightArrow);
-            
-            // Flèche gauche (pour tourner à gauche)
-            const leftArrow = createDirectionIndicator('left');
-            leftArrow.position.set(-0.5, 0, 0);
-            arrow.add(leftArrow);
-            
-            // Cercle de base
-            const circleGeometry = new THREE.RingGeometry(0.3, 0.4, 32);
-            const circleMaterial = new THREE.MeshBasicMaterial({
-                color: 0x4285F4,
+            // Ajout d'un effet de halo
+            const haloGeometry = new THREE.RingGeometry(0.3, 0.4, 32);
+            const haloMaterial = new THREE.MeshBasicMaterial({
+                color: 0xff0000,
                 side: THREE.DoubleSide,
                 transparent: true,
-                opacity: 0.3
+                opacity: 0.5
             });
-            const circle = new THREE.Mesh(circleGeometry, circleMaterial);
-            circle.rotation.x = Math.PI / 2;
-            circle.position.y = -0.1;
-            arrow.add(circle);
+            const halo = new THREE.Mesh(haloGeometry, haloMaterial);
+            halo.rotation.x = Math.PI / 2;
+            halo.position.y = 0.1;
+            arrow.add(halo);
             
-            arrow.position.set(0, 0, -2);
             scene.add(arrow);
-            
-            // Cache les deux flèches initialement
-            hideDirectionIndicators();
         }
         
-        function createDirectionIndicator(direction) {
-            const group = new THREE.Group();
+        // Mise à jour de la liste des restaurants
+        function updateRestaurantList() {
+            const container = document.getElementById('restaurants-container');
+            container.innerHTML = '';
             
-            // Tige de la flèche
-            const stemGeometry = new THREE.BoxGeometry(0.4, 0.05, 0.1);
-            const stem = new THREE.Mesh(stemGeometry, material);
-            group.add(stem);
-            
-            // Pointe de la flèche
-            const headGeometry = new THREE.BoxGeometry(0.2, 0.1, 0.1);
-            const head = new THREE.Mesh(headGeometry, material);
-            
-            if (direction === 'right') {
-                head.position.set(0.3, 0, 0);
-                head.rotation.z = Math.PI / 4;
-            } else {
-                head.position.set(-0.3, 0, 0);
-                head.rotation.z = -Math.PI / 4;
-            }
-            
-            group.add(head);
-            group.userData.direction = direction;
-            return group;
-        }
-        
-        function hideDirectionIndicators() {
-            arrow.children.forEach(child => {
-                if (child.userData.direction) {
-                    child.visible = false;
-                }
+            restaurants.sort((a, b) => a.distance - b.distance).forEach(restaurant => {
+                const item = document.createElement('div');
+                item.className = 'restaurant-item';
+                item.innerHTML = `
+                    <strong>${restaurant.name}</strong><br>
+                    <small>${restaurant.type} • ${restaurant.distance}m</small>
+                `;
+                
+                item.addEventListener('click', () => {
+                    selectRestaurant(restaurant);
+                });
+                
+                container.appendChild(item);
             });
         }
         
-        function showDirectionIndicator(direction) {
-            hideDirectionIndicators();
-            arrow.children.forEach(child => {
-                if (child.userData.direction === direction) {
-                    child.visible = true;
-                    
-                    // Animation de pulsation
-                    const scale = 1 + Math.sin(Date.now() * 0.01) * 0.2;
-                    child.scale.set(scale, scale, scale);
-                }
-            });
+        // Sélection d'un restaurant
+        function selectRestaurant(restaurant) {
+            selectedRestaurant = restaurant;
+            document.getElementById('ar-restaurant-name').textContent = restaurant.name;
+            document.getElementById('ar-distance').textContent = restaurant.distance;
+            
+            // Centrer la carte
+            map.setView(userPosition, 17);
+            map.fitBounds([userPosition, restaurant.position], { padding: [50, 50] });
+            
+            updateARPointer();
         }
-
-        // Mise à jour de la flèche AR
+        
+        // Mettre à jour la flèche AR
         function updateARPointer() {
             if (!selectedRestaurant || userHeading === null || !arrow) return;
             
             const bearing = calculateBearing(userPosition, selectedRestaurant.position);
-            let relativeAngle = (360 - userHeading + bearing) % 360;
+            const relativeAngle = (360 - userHeading + bearing) % 360;
             
-            // Ajustement pour avoir un angle entre -180 et 180
-            if (relativeAngle > 180) relativeAngle -= 360;
+            document.getElementById('ar-direction').textContent = relativeAngle.toFixed(0);
             
-            document.getElementById('ar-direction').textContent = Math.abs(relativeAngle).toFixed(0) + '° ' + 
-                (relativeAngle > 0 ? 'droite' : 'gauche');
-            
-            // Rotation de l'ensemble des flèches
+            // Rotation de la flèche 3D
             arrow.rotation.y = THREE.MathUtils.degToRad(relativeAngle);
             
-            // Affiche la flèche appropriée
-            if (Math.abs(relativeAngle) > 15) { // Seuil de 15° pour afficher les flèches
-                showDirectionIndicator(relativeAngle > 0 ? 'right' : 'left');
-            } else {
-                // Tout droit - cache les flèches
-                hideDirectionIndicators();
+            // Animation de pulsation
+            const scale = 1 + Math.sin(Date.now() * 0.005) * 0.1;
+            arrow.scale.set(scale, scale, scale);
+        }
+        
+        // Calculer l'angle entre deux points
+        function calculateBearing(start, end) {
+            const startLat = start[0] * Math.PI / 180;
+            const startLng = start[1] * Math.PI / 180;
+            const endLat = end[0] * Math.PI / 180;
+            const endLng = end[1] * Math.PI / 180;
+            
+            const y = Math.sin(endLng - startLng) * Math.cos(endLat);
+            const x = Math.cos(startLat) * Math.sin(endLat) -
+                      Math.sin(startLat) * Math.cos(endLat) * Math.cos(endLng - startLng);
+            let bearing = Math.atan2(y, x) * 180 / Math.PI;
+            return (bearing + 360) % 360;
+        }
+        
+        // Activer la caméra
+        async function startCamera() {
+            try {
+                if (cameraStream) {
+                    cameraStream.getTracks().forEach(track => track.stop());
+                }
+                
+                cameraStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: 'environment',
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
+                    },
+                    audio: false
+                });
+                
+                const video = document.getElementById('camera-feed');
+                video.srcObject = cameraStream;
+                
+                return true;
+            } catch (err) {
+                console.error("Erreur caméra:", err);
+                alert("Impossible d'accéder à la caméra: " + err.message);
+                return false;
             }
         }
-
-        // [Le reste de votre code reste inchangé]
+        
+        // Géolocalisation
+        function locateUser() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    position => {
+                        userPosition = [position.coords.latitude, position.coords.longitude];
+                        userMarker.setLatLng(userPosition);
+                        map.setView(userPosition, 17);
+                        
+                        if (selectedRestaurant) {
+                            updateARPointer();
+                        }
+                    },
+                    error => {
+                        console.error("Erreur géolocalisation:", error);
+                        userPosition = initialPosition;
+                        userMarker.setLatLng(userPosition);
+                        map.setView(userPosition, 17);
+                    },
+                    { enableHighAccuracy: true, maximumAge: 30000, timeout: 27000 }
+                );
+            } else {
+                alert("La géolocalisation n'est pas supportée");
+            }
+        }
+        
+        // Détection de l'orientation
+        function setupOrientation() {
+            if (window.DeviceOrientationEvent) {
+                const handleOrientation = (event) => {
+                    if (event.alpha !== null) {
+                        userHeading = event.alpha;
+                        updateARPointer();
+                    }
+                };
+                
+                if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    DeviceOrientationEvent.requestPermission()
+                        .then(response => {
+                            if (response === 'granted') {
+                                window.addEventListener('deviceorientation', handleOrientation);
+                            }
+                        })
+                        .catch(console.error);
+                } else {
+                    window.addEventListener('deviceorientation', handleOrientation);
+                }
+            } else {
+                alert("Votre appareil ne supporte pas la détection d'orientation");
+            }
+        }
+        
+        // Basculer entre le mode carte et AR
+        async function toggleARMode() {
+            const arView = document.getElementById('ar-view');
+            const mapContainer = document.getElementById('map-container');
+            const arInfo = document.getElementById('ar-info');
+            
+            if (arView.style.display === 'block') {
+                // Quitter le mode AR
+                arView.style.display = 'none';
+                mapContainer.style.display = 'block';
+                arInfo.style.display = 'none';
+                document.getElementById('ar-btn').textContent = '🎥 Mode AR';
+                
+                if (cameraStream) {
+                    cameraStream.getTracks().forEach(track => track.stop());
+                    cameraStream = null;
+                }
+            } else {
+                // Entrer en mode AR
+                if (!selectedRestaurant) {
+                    alert("Veuillez d'abord sélectionner un restaurant");
+                    return;
+                }
+                
+                const cameraStarted = await startCamera();
+                if (!cameraStarted) return;
+                
+                initThreeJS(); // Initialiser Three.js
+                
+                arView.style.display = 'block';
+                mapContainer.style.display = 'none';
+                arInfo.style.display = 'block';
+                document.getElementById('ar-btn').textContent = '🗺️ Retour carte';
+                
+                setupOrientation();
+                updateARPointer();
+            }
+        }
+        
+        // Événements
+        document.getElementById('locate-btn').addEventListener('click', locateUser);
+        document.getElementById('ar-btn').addEventListener('click', toggleARMode);
+        
+        // Initialisation
+        updateRestaurantList();
+        
+        // Redimensionnement
+        window.addEventListener('resize', () => {
+            if (renderer) {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            }
+            map.invalidateSize();
+        });
     </script>
 </body>
 </html>
